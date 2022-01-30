@@ -1,2 +1,4 @@
+github.com/ericlagergren/polyval v0.0.0-20220130100006-67158389b6ea h1:dj3Co6qy/0ZV0eI5yI86LrIO2QDhMtKHO7AgXueJD2c=
+github.com/ericlagergren/polyval v0.0.0-20220130100006-67158389b6ea/go.mod h1:pIuzMhC7EY5ELL7uOdrkhaJFM5LV2r35yFnlysGSnro=
 golang.org/x/exp v0.0.0-20220128181451-c853b6ddb95e h1:FmsvSkPHPBTboKvYBUtHbHvkQGxq+XSrqPXKDQf2W3s=
 golang.org/x/exp v0.0.0-20220128181451-c853b6ddb95e/go.mod h1:M50CtfS+xv2iy/epuEazynj250ScQ0/DOjcsin9UE8k=

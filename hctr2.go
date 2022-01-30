@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 
 	"github.com/ericlagergren/hctr2/internal/subtle"
+	"github.com/ericlagergren/polyval"
 )
 
 func NewCipher(block cipher.Block) *Cipher {
@@ -85,8 +86,11 @@ func (c *Cipher) xctr(nonce, plaintext []byte) []byte {
 func (c *Cipher) polyhash(h, tweak, M []byte) []byte {
 	blockSize := c.block.BlockSize()
 
-	var v polyval
-	v.init(h) // TODO(eric): assumes len(h) == 16
+	// TODO(eric): assumes len(h) == 16
+	p, err := polyval.New(h)
+	if err != nil {
+		panic(err)
+	}
 
 	// If n divides |M|:
 	//    POLYVAL(h, bin(2*|T| + 2) || pad(T) || M)
@@ -113,16 +117,10 @@ func (c *Cipher) polyhash(h, tweak, M []byte) []byte {
 
 	for len(blocks) > 0 {
 		// TODO(eric): this assumes blockSize == 16
-		var x fieldElement
-		x.setBytes(blocks[0:16])
-		v.update(x)
+		p.Update(blocks[0:16])
 		blocks = blocks[16:]
 	}
-	y := v.sum()
-	tag := make([]byte, 16)
-	binary.LittleEndian.PutUint64(tag[0:8], y.lo)
-	binary.LittleEndian.PutUint64(tag[8:16], y.hi)
-	return tag
+	return p.Sum(nil)
 }
 
 func xor(x, y []byte) []byte {

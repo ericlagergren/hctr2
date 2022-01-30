@@ -3,11 +3,20 @@ package hctr2
 import (
 	"bytes"
 	"crypto/aes"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func unhex(s string) []byte {
+	p, err := hex.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
 
 type vector struct {
 	Cipher struct {
