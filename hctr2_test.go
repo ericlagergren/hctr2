@@ -58,7 +58,10 @@ func TestHCTR2Vectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c := NewCipher(block)
+			c, err := NewCipher(block)
+			if err != nil {
+				t.Fatal(err)
+			}
 			plaintext := unhex(v.Plaintext)
 			got := make([]byte, len(plaintext))
 			c.Encrypt(got, plaintext, unhex(v.Input.Tweak))
@@ -91,10 +94,14 @@ func TestXCTRVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c := NewCipher(block)
+			c, err := NewCipher(block)
+			if err != nil {
+				t.Fatal(err)
+			}
 			nonce := unhex(v.Input.Nonce)
-			plaintext := unhex(v.Plaintext)
-			got := c.xctr(nonce, plaintext)
+			src := unhex(v.Plaintext)
+			got := make([]byte, len(src))
+			c.xctr(got, src, nonce)
 			want := unhex(v.Ciphertext)
 			if !bytes.Equal(got, want) {
 				t.Fatalf("#%d: (%s): expected %x, got %x",
