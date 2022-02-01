@@ -3,6 +3,7 @@ package hctr2
 import (
 	"bytes"
 	"crypto/aes"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -54,6 +55,9 @@ func TestHCTR2Vectors(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, v := range vecs {
+			if i != 30 {
+				continue
+			}
 			block, err := aes.NewCipher(unhex(v.Input.Key))
 			if err != nil {
 				t.Fatal(err)
@@ -63,19 +67,33 @@ func TestHCTR2Vectors(t *testing.T) {
 				t.Fatal(err)
 			}
 			plaintext := unhex(v.Plaintext)
+			tweak := unhex(v.Input.Tweak)
 			got := make([]byte, len(plaintext))
-			c.Encrypt(got, plaintext, unhex(v.Input.Tweak))
+
 			want := unhex(v.Ciphertext)
+			c.Encrypt(got, plaintext, tweak)
 			if !bytes.Equal(got, want) {
 				t.Fatalf("#%d: (%s): expected %x, got %x",
 					i, v.Description, want, got)
 			}
+
+			// c.Decrypt(got, want, tweak)
+			// if !bytes.Equal(got, plaintext) {
+			// 	t.Fatalf("#%d: (%s): expected %x, got %x",
+			// 		i, v.Description, plaintext, got)
+			// }
 		}
 	}
 
-	t.Run("AES-256", func(t *testing.T) {
-		test(t, filepath.Join("testdata", "hctr2_aes256.json"))
-	})
+	for _, s := range []string{
+		"HCTR2_AES256",
+		"HCTR2_AES192",
+		"HCTR2_AES128",
+	} {
+		t.Run(s, func(t *testing.T) {
+			test(t, filepath.Join("testdata", s+".json"))
+		})
+	}
 }
 
 func TestXCTRVectors(t *testing.T) {
@@ -101,8 +119,9 @@ func TestXCTRVectors(t *testing.T) {
 			nonce := unhex(v.Input.Nonce)
 			src := unhex(v.Plaintext)
 			got := make([]byte, len(src))
-			c.xctr(got, src, nonce)
 			want := unhex(v.Ciphertext)
+
+			c.xctr(block.Encrypt, got, src, nonce)
 			if !bytes.Equal(got, want) {
 				t.Fatalf("#%d: (%s): expected %x, got %x",
 					i, v.Description, want, got)
@@ -110,7 +129,42 @@ func TestXCTRVectors(t *testing.T) {
 		}
 	}
 
-	t.Run("AES-256", func(t *testing.T) {
-		test(t, filepath.Join("testdata", "xctr_aes256.json"))
-	})
+	for _, s := range []string{
+		"XCTR_AES256",
+		"XCTR_AES192",
+		"XCTR_AES128",
+	} {
+		t.Run(s, func(t *testing.T) {
+			test(t, filepath.Join("testdata", s+".json"))
+		})
+	}
+}
+
+var sink []byte
+
+func BenchmarkEncryptAES256_512(b *testing.B) {
+	benchmarkEncrypt(b, 32, 512)
+}
+
+func BenchmarkEncryptAES256_4096(b *testing.B) {
+	benchmarkEncrypt(b, 32, 4096)
+}
+
+func BenchmarkEncryptAES256_8192(b *testing.B) {
+	benchmarkEncrypt(b, 32, 8192)
+}
+
+func benchmarkEncrypt(b *testing.B, keyLen, bufLen int) {
+	key := make([]byte, keyLen)
+	block, _ := aes.NewCipher(key)
+	c, _ := NewCipher(block)
+	buf := make([]byte, bufLen)
+	tweak := make([]byte, 16)
+
+	b.SetBytes(int64(len(buf)))
+	for i := 0; i < b.N; i++ {
+		binary.LittleEndian.PutUint64(tweak[0:8], uint64(i))
+		c.Encrypt(buf, buf, tweak)
+	}
+	sink = buf
 }

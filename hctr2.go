@@ -24,9 +24,25 @@ func NewCipher(block cipher.Block) (*Cipher, error) {
 	if n := block.BlockSize(); n != BlockSize {
 		return nil, fmt.Errorf("hctr2: invalid block size: %d", n)
 	}
-	return &Cipher{
+
+	c := &Cipher{
 		block: block,
-	}, nil
+	}
+
+	// L ← Ek(bin(1))
+	binary.LittleEndian.PutUint64(c.L[0:8], 1)
+	block.Encrypt(c.L[:], c.L[:])
+
+	// h ← Ek(bin(0))
+	h := make([]byte, BlockSize)
+	block.Encrypt(h, h)
+
+	p, err := polyval.New(h)
+	if err != nil {
+		return nil, err
+	}
+	c.h = p
+	return c, nil
 }
 
 // Cipher is an HCTR2 cipher.
@@ -34,6 +50,13 @@ func NewCipher(block cipher.Block) (*Cipher, error) {
 // TODO(eric): docs
 type Cipher struct {
 	block cipher.Block
+	h     *polyval.Polyval
+	L     [BlockSize]byte
+	sum   [BlockSize]byte
+	s     [BlockSize]byte
+	uu    [BlockSize]byte
+	mm    [BlockSize]byte
+	ctr   [BlockSize]byte
 }
 
 // Encrypt encrypts plaintext with tweak and writes the result to
@@ -50,65 +73,69 @@ func (c *Cipher) Encrypt(ciphertext, plaintext, tweak []byte) {
 		panic("hctr2: ciphertext is smaller than plaintext")
 	}
 	if len(plaintext) < BlockSize {
-		panic("hctr2: plaintext is not a smaller than the block size")
+		panic("hctr2: plaintext is smaller than the block size")
 	}
 	if subtle.InexactOverlap(ciphertext[:len(plaintext)], plaintext) {
 		panic("hctr2: invalid buffer overlap")
 	}
+	c.hctr2(c.block.Encrypt, ciphertext, plaintext, tweak)
+}
 
-	// M || N ← P, |M| = n
-	M := plaintext[:BlockSize]
-	N := plaintext[BlockSize:]
-
-	// h ← Ek(bin(0))
-	h := make([]byte, BlockSize)
-	c.block.Encrypt(h, h)
-
-	p, err := polyval.New(h)
-	if err != nil {
-		panic(err)
+// Decrypt decrypts ciphertext with tweak and writes the result
+// to plaintext.
+//
+// The length of plaintext must be greater than or equal to the
+// length of plaintext.
+//
+// plaintext and ciphertext must overlap entirely or not at all.
+func (c *Cipher) Decrypt(plaintext, ciphertext, tweak []byte) {
+	if len(plaintext) < len(ciphertext) {
+		panic("hctr2: plaintext is smaller than ciphertext")
 	}
-	initTweak(p, tweak, len(N))
+	if len(ciphertext) < BlockSize {
+		panic("hctr2: ciphertext is smaller than the block size")
+	}
+	if subtle.InexactOverlap(plaintext[:len(ciphertext)], ciphertext) {
+		panic("hctr2: invalid buffer overlap")
+	}
+	c.hctr2(c.block.Decrypt, plaintext, ciphertext, tweak)
+}
+
+func (c *Cipher) hctr2(crypt func(dst, src []byte), dst, src, tweak []byte) {
+	// M || N ← P, |M| = n
+	M := src[:BlockSize]
+	N := src[BlockSize:]
+
+	c.initTweak(tweak, len(N))
 	// Save the POLYVAL state after adding the tweak since we can
 	// reuse it later.
-	state, _ := p.MarshalBinary()
+	state, _ := c.h.MarshalBinary()
 
 	// MM ← M ⊕ H_h(T, N)
-	MM := c.polyhash(p, N)
-	xorBlock(MM, M, MM)
+	c.polyhash(c.sum[:0], N)
+	xorBlock(c.mm[:], M, c.sum[:])
 
 	// UU ← Ek(MM)
-	UU := make([]byte, BlockSize)
-	c.block.Encrypt(UU, MM)
-
-	// L ← Ek(bin(1))
-	L := make([]byte, BlockSize)
-	binary.LittleEndian.PutUint64(L[0:8], 1)
-	c.block.Encrypt(L, L)
+	crypt(c.uu[:], c.mm[:])
 
 	// S ← MM ⊕ UU ⊕ L
-	S := make([]byte, len(MM))
-	xorBlock3(S, MM, UU, L)
+	xorBlock3(c.s[:], c.mm[:], c.uu[:], c.L[:])
 
 	// V ← N ⊕ XCTR_k(S)[0;|N|]
-	V := ciphertext[BlockSize:]
-	c.xctr(V, N, S)
+	V := dst[BlockSize:]
+	c.xctr(crypt, V, N, c.s[:])
 
-	err = p.UnmarshalBinary(state)
+	err := c.h.UnmarshalBinary(state)
 	if err != nil {
 		panic(err)
 	}
 
 	// U ← UU ⊕ Hh(T, V)
-	U := ciphertext
-	xorBlock(U, UU, c.polyhash(p, V))
-
-	// C ← U || V
-	// U = ciphertext[:BlockSize]
-	// V = ciphertext[BlockSize:]
+	c.polyhash(c.sum[:0], V)
+	xorBlock(dst, c.uu[:], c.sum[:])
 }
 
-func initTweak(h *polyval.Polyval, tweak []byte, n int) {
+func (c *Cipher) initTweak(tweak []byte, n int) {
 	// M = the input to the hash.
 	// n = the block size of the hash.
 	//
@@ -122,10 +149,10 @@ func initTweak(h *polyval.Polyval, tweak []byte, n int) {
 		l++
 	}
 	binary.LittleEndian.PutUint64(block, uint64(l))
-	h.Update(block)
+	c.h.Update(block)
 
 	for len(tweak) >= BlockSize {
-		h.Update(tweak[0:BlockSize])
+		c.h.Update(tweak[0:BlockSize])
 		tweak = tweak[BlockSize:]
 	}
 	if len(tweak) > 0 {
@@ -133,43 +160,40 @@ func initTweak(h *polyval.Polyval, tweak []byte, n int) {
 			block[i] = 0
 		}
 		copy(block, tweak)
-		h.Update(block)
+		c.h.Update(block)
 	}
 }
 
-func (c *Cipher) polyhash(h *polyval.Polyval, M []byte) []byte {
-	for len(M) >= BlockSize {
-		h.Update(M[0:BlockSize])
-		M = M[BlockSize:]
+func (c *Cipher) polyhash(dst, src []byte) {
+	if len(src) >= BlockSize {
+		n := len(src) &^ (BlockSize - 1)
+		c.h.Update(src[:n])
+		src = src[n:]
 	}
-	if len(M) > 0 {
+	if len(src) > 0 {
 		block := make([]byte, BlockSize)
-		n := copy(block, M)
+		n := copy(block, src)
 		block[n] = 1
-		h.Update(block)
+		c.h.Update(block)
 	}
-	return h.Sum(nil)
+	c.h.Sum(dst)
 }
 
 // xctr performs XCTR_k(S) ^ nonce.
-func (c *Cipher) xctr(dst, src, nonce []byte) {
+func (c *Cipher) xctr(crypt func(dst, src []byte), dst, src, nonce []byte) {
 	if len(nonce) == 0 {
 		return
 	}
 
-	// TODO(eric): we might be able to get rid of this variable
-	// if len(dst) % BlockSize == 0.
-	block := make([]byte, BlockSize)
-
 	i := 0
 	nblocks := len(src) / BlockSize
 	for i < nblocks {
-		binary.LittleEndian.PutUint64(block[0:8], uint64(i+1))
-		binary.LittleEndian.PutUint64(block[8:16], 0)
+		binary.LittleEndian.PutUint64(c.ctr[0:8], uint64(i+1))
+		binary.LittleEndian.PutUint64(c.ctr[8:16], 0)
 
-		xorBlock(block, block, nonce)
-		c.block.Encrypt(block, block)
-		xorBlock(dst, block, src)
+		xorBlock(c.ctr[:], c.ctr[:], nonce)
+		crypt(c.ctr[:], c.ctr[:])
+		xorBlock(dst, c.ctr[:], src)
 
 		dst = dst[BlockSize:]
 		src = src[BlockSize:]
@@ -177,12 +201,12 @@ func (c *Cipher) xctr(dst, src, nonce []byte) {
 	}
 
 	if len(src) != 0 {
-		binary.LittleEndian.PutUint64(block[0:8], uint64(i+1))
-		binary.LittleEndian.PutUint64(block[8:16], 0)
+		binary.LittleEndian.PutUint64(c.ctr[0:8], uint64(i+1))
+		binary.LittleEndian.PutUint64(c.ctr[8:16], 0)
 
-		xor(block, block, nonce, BlockSize)
-		c.block.Encrypt(block, block)
-		xor(dst, block, src, len(src))
+		xor(c.ctr[:], c.ctr[:], nonce, BlockSize)
+		crypt(c.ctr[:], c.ctr[:])
+		xor(dst, c.ctr[:], src, len(src))
 	}
 }
 
@@ -198,14 +222,18 @@ func xorBlock(z, x, y []byte) {
 
 // xorBlock3 sets z = v^x^y.
 func xorBlock3(z, v, x, y []byte) {
-	v0 := binary.LittleEndian.Uint64(v[0:8])
-	v1 := binary.LittleEndian.Uint64(v[8:16])
-	x0 := binary.LittleEndian.Uint64(x[0:8])
-	x1 := binary.LittleEndian.Uint64(x[8:16])
-	y0 := binary.LittleEndian.Uint64(y[0:8])
-	y1 := binary.LittleEndian.Uint64(y[8:16])
-	binary.LittleEndian.PutUint64(z[0:8], v0^x0^y0)
-	binary.LittleEndian.PutUint64(z[8:16], v1^x1^y1)
+	// This is not written in the obvious manner so that the
+	// compiler will inline it.
+
+	z0 := binary.LittleEndian.Uint64(v[0:]) ^
+		binary.LittleEndian.Uint64(x[0:]) ^
+		binary.LittleEndian.Uint64(y[0:])
+	binary.LittleEndian.PutUint64(z[0:], z0)
+
+	z1 := binary.LittleEndian.Uint64(v[8:]) ^
+		binary.LittleEndian.Uint64(x[8:]) ^
+		binary.LittleEndian.Uint64(y[8:])
+	binary.LittleEndian.PutUint64(z[8:], z1)
 }
 
 // xor sets z = x^y for up to n bytes.
