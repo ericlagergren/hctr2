@@ -1,5 +1,27 @@
 # hctr2
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/ericlagergren/hctr2.svg)](https://pkg.go.dev/github.com/ericlagergren/hctr2)
+
 Length-preserving encryption algorithm https://eprint.iacr.org/2021/1441.pdf
+
+## Installation
+
+```bash
+go get github.com/ericlagergren/hctr2@latest
+```
+
+## Performance
+
+The performance of HCTR2 is determined by two things: XCTR and
+POLYVAL. This module provides an ARMv8 assembly implementation
+of XCTR and uses a hardware-accelerated POLYVAL implementation
+(see [github.com/ericlagergren/polyval](https://pkg.go.dev/github.com/ericlagergren/polyval)).
+
+The ARMv8 assembly implementation of XCTR-AES-256 with
+hardware-accelerated POLYVAL runs at about 1 cycle per byte.
+
+The `crypto/aes` implementation of XCTR-AES-256 with
+hardware-accelerated POLYVAL runs at about 4 cycles per byte.
 
 ## Security
 
