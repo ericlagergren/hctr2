@@ -185,7 +185,7 @@ func (c *Cipher) hctr2(dst, src, tweak []byte, seal bool) {
 	xorBlock3(&c.s, &c.mm, &c.uu, &c.l)
 
 	// V ← N ⊕ XCTR_k(S)[0;|N|]
-	V := dst[BlockSize:]
+	V := dst[BlockSize:len(src)]
 	c.xctr(V, N, &c.s)
 
 	c.h.UnmarshalBinary(state)

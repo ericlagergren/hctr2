@@ -5,9 +5,13 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"golang.org/x/exp/rand"
 )
 
 func unhex(s string) []byte {
@@ -124,6 +128,60 @@ func TestXCTRVectors(t *testing.T) {
 		t.Run(s, func(t *testing.T) {
 			test(t, filepath.Join("testdata", s+".json"))
 		})
+	}
+}
+
+func TestSelfFuzz(t *testing.T) {
+	for _, n := range []int{16, 24, 32} {
+		name := fmt.Sprintf("AES-%d", n*8)
+		t.Run(name, func(t *testing.T) {
+			key := make([]byte, n)
+			c, err := NewAES(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testSelfFuzz(t, c)
+		})
+	}
+}
+
+func testSelfFuzz(t *testing.T, c *Cipher) {
+	seed := uint64(time.Now().UnixNano())
+	rng := rand.New(rand.NewSource(seed))
+	d := 2 * time.Second
+	if testing.Short() {
+		d = 10 * time.Millisecond
+	}
+	timer := time.NewTimer(d)
+
+	const (
+		N = BlockSize * 2
+	)
+	buf := make([]byte, N)
+	for i := range buf {
+		buf[i] = byte(i)
+	}
+	tweak := make([]byte, N)
+	for i := range tweak {
+		tweak[i] = byte(i)
+	}
+	for {
+		select {
+		case <-timer.C:
+			return
+		default:
+		}
+
+		n := rng.Intn(len(buf)-(BlockSize+1)) + (BlockSize + 1)
+		m := rng.Intn(n-BlockSize) + BlockSize
+		w := rng.Intn(len(tweak))
+		c.Encrypt(buf[:n], buf[:m], tweak[:w])
+		c.Decrypt(buf[:n], buf[:m], tweak[:w])
+		for i, c := range buf[:m] {
+			if c != byte(i) {
+				t.Fatalf("expected %x, got %x", byte(i), c)
+			}
+		}
 	}
 }
 
