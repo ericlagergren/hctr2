@@ -2,7 +2,6 @@ package hctr2
 
 import (
 	"bytes"
-	"crypto/aes"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -55,14 +54,7 @@ func TestHCTR2Vectors(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, v := range vecs {
-			if i != 30 {
-				continue
-			}
-			block, err := aes.NewCipher(unhex(v.Input.Key))
-			if err != nil {
-				t.Fatal(err)
-			}
-			c, err := NewCipher(block)
+			c, err := NewAES(unhex(v.Input.Key))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,11 +100,7 @@ func TestXCTRVectors(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, v := range vecs {
-			block, err := aes.NewCipher(unhex(v.Input.Key))
-			if err != nil {
-				t.Fatal(err)
-			}
-			c, err := NewCipher(block)
+			c, err := NewAES(unhex(v.Input.Key))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +109,7 @@ func TestXCTRVectors(t *testing.T) {
 			got := make([]byte, len(src))
 			want := unhex(v.Ciphertext)
 
-			c.xctr(block.Encrypt, got, src, nonce)
+			c.xctr(got, src, (*[BlockSize]byte)(nonce))
 			if !bytes.Equal(got, want) {
 				t.Fatalf("#%d: (%s): expected %x, got %x",
 					i, v.Description, want, got)
@@ -156,8 +144,7 @@ func BenchmarkEncryptAES256_8192(b *testing.B) {
 
 func benchmarkEncrypt(b *testing.B, keyLen, bufLen int) {
 	key := make([]byte, keyLen)
-	block, _ := aes.NewCipher(key)
-	c, _ := NewCipher(block)
+	c, _ := NewAES(key)
 	buf := make([]byte, bufLen)
 	tweak := make([]byte, 16)
 
