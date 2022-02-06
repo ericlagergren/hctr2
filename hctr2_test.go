@@ -68,12 +68,11 @@ func TestHCTR2Vectors(t *testing.T) {
 				t.Fatalf("#%d: (%s): expected %x, got %x",
 					i, v.Description, want, got)
 			}
-
-			// c.Decrypt(got, want, tweak)
-			// if !bytes.Equal(got, plaintext) {
-			// 	t.Fatalf("#%d: (%s): expected %x, got %x",
-			// 		i, v.Description, plaintext, got)
-			// }
+			c.Decrypt(got, want, tweak)
+			if !bytes.Equal(got, plaintext) {
+				t.Fatalf("#%d: (%s): expected %x, got %x",
+					i, v.Description, plaintext, got)
+			}
 		}
 	}
 
