@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build arm64 && gc && !purego
+//go:build (amd64 || arm64) && gc && !purego
 
 package hctr2
 
@@ -10,6 +10,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"fmt"
 	"runtime"
 
 	"github.com/ericlagergren/hctr2/internal/subtle"
@@ -35,13 +36,17 @@ var (
 	_ xctrAble     = (*aesCipher)(nil)
 )
 
-// TODO(eric): add amd64 support.
-var haveAES = runtime.GOOS == "darwin" || cpu.ARM64.HasAES
+var haveAES = runtime.GOOS == "darwin" ||
+	cpu.ARM64.HasAES ||
+	cpu.X86.HasAES
 
 func newCipher(key []byte) cipher.Block {
 	if !haveAES {
-		// len(key) is checked by NewAES.
-		block, _ := aes.NewCipher(key)
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			// len(key) is checked by NewAES.
+			panic(err)
+		}
 		return block
 	}
 	n := len(key) + 28
@@ -83,10 +88,28 @@ func (c *aesCipher) Decrypt(dst, src []byte) {
 
 func (c *aesCipher) xctr(dst, src []byte, nonce *[BlockSize]byte) {
 	n := len(src) / BlockSize
-	if n > 0 {
-		xctrAsm(len(c.enc)/4-1, &c.enc[0], &dst[0], &src[0], n, nonce)
-		src = src[n*BlockSize:]
-		dst = dst[n*BlockSize:]
+	if true {
+		if n > 0 {
+			xctrAsm(len(c.enc)/4-1, &c.enc[0], &dst[0], &src[0], n, nonce)
+			src = src[n*BlockSize:]
+			dst = dst[n*BlockSize:]
+		}
+	} else {
+		n = 0
+		for len(src) >= BlockSize && len(dst) >= BlockSize {
+			n++
+			var ctr [BlockSize]byte
+			binary.LittleEndian.PutUint64(ctr[0:8], uint64(n))
+			binary.LittleEndian.PutUint64(ctr[8:16], 0)
+
+			xorBlock(&ctr, &ctr, nonce)
+			encryptBlockAsm(len(c.enc)/4-1, &c.enc[0], &ctr[0], &ctr[0])
+			xorBlock((*[BlockSize]byte)(dst), &ctr, (*[BlockSize]byte)(src))
+			fmt.Printf("dst=%x\n", (*[BlockSize]byte)(dst))
+
+			dst = dst[BlockSize:]
+			src = src[BlockSize:]
+		}
 	}
 	if len(src) > 0 {
 		var ctr [BlockSize]byte
