@@ -125,16 +125,16 @@ type Cipher struct {
 //
 // ciphertext and plaintext must overlap entirely or not at all.
 func (c *Cipher) Encrypt(ciphertext, plaintext, tweak []byte) {
-	if len(ciphertext) < len(plaintext) {
-		panic("hctr2: ciphertext is smaller than plaintext")
-	}
 	if len(plaintext) < BlockSize {
 		panic("hctr2: plaintext is smaller than the block size")
+	}
+	if len(ciphertext) < len(plaintext) {
+		panic("hctr2: ciphertext is smaller than plaintext")
 	}
 	if subtle.InexactOverlap(ciphertext[:len(plaintext)], plaintext) {
 		panic("hctr2: invalid buffer overlap")
 	}
-	c.hctr2(ciphertext, plaintext, tweak, true)
+	c.hctr2(ciphertext[:len(plaintext)], plaintext, tweak, true)
 }
 
 // Decrypt decrypts ciphertext with tweak and writes the result
@@ -145,16 +145,16 @@ func (c *Cipher) Encrypt(ciphertext, plaintext, tweak []byte) {
 //
 // plaintext and ciphertext must overlap entirely or not at all.
 func (c *Cipher) Decrypt(plaintext, ciphertext, tweak []byte) {
-	if len(plaintext) < len(ciphertext) {
-		panic("hctr2: plaintext is smaller than ciphertext")
-	}
 	if len(ciphertext) < BlockSize {
 		panic("hctr2: ciphertext is smaller than the block size")
+	}
+	if len(plaintext) < len(ciphertext) {
+		panic("hctr2: plaintext is smaller than ciphertext")
 	}
 	if subtle.InexactOverlap(plaintext[:len(ciphertext)], ciphertext) {
 		panic("hctr2: invalid buffer overlap")
 	}
-	c.hctr2(plaintext, ciphertext, tweak, false)
+	c.hctr2(plaintext[:len(ciphertext)], ciphertext, tweak, false)
 }
 
 func (c *Cipher) hctr2(dst, src, tweak []byte, seal bool) {
