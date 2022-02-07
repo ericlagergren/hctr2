@@ -2,19 +2,19 @@
 
 #include "textflag.h"
 
-#define ENCRYPT256x1(v0, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14) \
+#define ENCRYPT256x1(v0, rk1, rk2) \
 	AESE  rk1.B16, v0.B16 \
 	AESMC v0.B16, v0.B16  \
 	AESE  rk2.B16, v0.B16 \
 	AESMC v0.B16, v0.B16
 
-#define ENCRYPT196x1(v0, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14) \
+#define ENCRYPT192x1(v0, rk3, rk4) \
 	AESE  rk3.B16, v0.B16 \
 	AESMC v0.B16, v0.B16  \
 	AESE  rk4.B16, v0.B16 \
 	AESMC v0.B16, v0.B16
 
-#define ENCRYPT128x1(v0, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14) \
+#define ENCRYPT128x1(v0, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14, rk15) \
 	AESE  rk5.B16, v0.B16          \
 	AESMC v0.B16, v0.B16           \
 	AESE  rk6.B16, v0.B16          \
@@ -36,7 +36,7 @@
 	AESE  rk14.B16, v0.B16         \
 	VEOR  v0.B16, rk15.B16, v0.B16
 
-#define ENCRYPT256x4(v0, v1, v2, v3, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14) \
+#define ENCRYPT256x4(v0, v1, v2, v3, rk1, rk2) \
 	AESE  rk1.B16, v0.B16 \
 	AESE  rk1.B16, v1.B16 \
 	AESE  rk1.B16, v2.B16 \
@@ -57,7 +57,7 @@
 	AESMC v2.B16, v2.B16  \
 	AESMC v3.B16, v3.B16
 
-#define ENCRYPT196x4(v0, v1, v2, v3, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14) \
+#define ENCRYPT192x4(v0, v1, v2, v3, rk3, rk4) \
 	AESE  rk3.B16, v0.B16 \
 	AESE  rk3.B16, v1.B16 \
 	AESE  rk3.B16, v2.B16 \
@@ -78,7 +78,7 @@
 	AESMC v2.B16, v2.B16  \
 	AESMC v3.B16, v3.B16
 
-#define ENCRYPT128x4(v0, v1, v2, v3, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14) \
+#define ENCRYPT128x4(v0, v1, v2, v3, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14, rk15) \
 	AESE  rk5.B16, v0.B16          \
 	AESE  rk5.B16, v1.B16          \
 	AESE  rk5.B16, v2.B16          \
@@ -197,7 +197,7 @@ TEXT ·xctrAsm(SB), NOSPLIT, $0-48
 #define idx3 R12
 
 #define n0 R13
-#define n1 R14
+#define c1 R14
 
 #define nonce V0
 
@@ -216,24 +216,18 @@ TEXT ·xctrAsm(SB), NOSPLIT, $0-48
 #define rk13 V13
 #define rk14 V14
 #define rk15 V15
-#define rk16 V16
 
-#define dst0 V17
-#define dst1 V18
-#define dst2 V19
-#define dst3 V20
+#define src0 V16
+#define src1 V17
+#define src2 V18
+#define src3 V19
 
-#define src0 V21
-#define src1 V22
-#define src2 V23
-#define src3 V24
+#define ctr0 V20
+#define ctr1 V21
+#define ctr2 V22
+#define ctr3 V23
 
-#define ctr0 V25
-#define ctr1 V26
-#define ctr2 V27
-#define ctr3 V28
-
-#define ctr V29
+#define ctr V24
 
 	MOVD nr+0(FP), nrounds
 	MOVD xk+8(FP), xk_ptr
@@ -246,13 +240,13 @@ TEXT ·xctrAsm(SB), NOSPLIT, $0-48
 
 loadKeys:
 	CMP $12, nrounds
+	BEQ load192
 	BLT load128
-	BEQ load196
 
 load256:
 	VLD1.P 32(xk_ptr), [rk1.B16, rk2.B16]
 
-load196:
+load192:
 	VLD1.P 32(xk_ptr), [rk3.B16, rk4.B16]
 
 load128:
@@ -269,7 +263,7 @@ initLoops:
 	VEOR ctr.B16, ctr.B16, ctr.B16
 	VEOR nonce.B16, ctr.B16, ctr.B16
 	VMOV nonce.D[0], n0
-	VMOV ctr.D[1], n1
+	VMOV ctr.D[1], c1
 
 initSingleLoop:
 	ANDS $3, remain, nsingle
@@ -279,27 +273,27 @@ initSingleLoop:
 singleLoop:
 	VLD1.P 16(src_ptr), [src0.B16]
 
-	VMOV n1, ctr.D[1]
+	VMOV c1, ctr.D[1]
 	VMOV ctr.B16, ctr0.B16
 	ADD  $1, idx, idx0
 	EOR  n0, idx0, idx0
 	VMOV idx0, ctr0.D[0]
 
 	CMP $12, nrounds
+	BEQ enc192x1
 	BLT enc128x1
-	BEQ enc196x1
 
 enc256x1:
-	ENCRYPT256x1(ctr0, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14)
+	ENCRYPT256x1(ctr0, rk1, rk2)
 
-enc196x1:
-	ENCRYPT196x1(ctr0, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14)
+enc192x1:
+	ENCRYPT192x1(ctr0, rk3, rk4)
 
 enc128x1:
-	ENCRYPT128x1(ctr0, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14)
+	ENCRYPT128x1(ctr0, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14, rk15)
 
-	VEOR   src0.B16, ctr0.B16, dst0.B16
-	VST1.P [dst0.B16], 16(dst_ptr)
+	VEOR   src0.B16, ctr0.B16, ctr0.B16
+	VST1.P [ctr0.B16], 16(dst_ptr)
 
 	ADD  $1, idx
 	SUBS $1, nsingle
@@ -313,7 +307,7 @@ initWideLoop:
 wideLoop:
 	VLD1.P 64(src_ptr), [src0.B16, src1.B16, src2.B16, src3.B16]
 
-	VMOV n1, ctr.D[1]
+	VMOV c1, ctr.D[1]
 	VMOV ctr.B16, ctr0.B16
 	VMOV ctr.B16, ctr1.B16
 	VMOV ctr.B16, ctr2.B16
@@ -335,23 +329,23 @@ wideLoop:
 	VMOV idx3, ctr3.D[0]
 
 	CMP $12, nrounds
+	BEQ enc192x4
 	BLT enc128x4
-	BEQ enc196x4
 
 enc256x4:
-	ENCRYPT256x4(ctr0, ctr1, ctr2, ctr3, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14)
+	ENCRYPT256x4(ctr0, ctr1, ctr2, ctr3, rk1, rk2)
 
-enc196x4:
-	ENCRYPT196x4(ctr0, ctr1, ctr2, ctr3, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14)
+enc192x4:
+	ENCRYPT192x4(ctr0, ctr1, ctr2, ctr3, rk3, rk4)
 
 enc128x4:
-	ENCRYPT128x4(ctr0, ctr1, ctr2, ctr3, rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14)
+	ENCRYPT128x4(ctr0, ctr1, ctr2, ctr3, rk5, rk6, rk7, rk8, rk9, rk10, rk11, rk12, rk13, rk14, rk15)
 
-	VEOR   src0.B16, ctr0.B16, dst0.B16
-	VEOR   src1.B16, ctr1.B16, dst1.B16
-	VEOR   src2.B16, ctr2.B16, dst2.B16
-	VEOR   src3.B16, ctr3.B16, dst3.B16
-	VST1.P [dst0.B16, dst1.B16, dst2.B16, dst3.B16], 64(dst_ptr)
+	VEOR   src0.B16, ctr0.B16, ctr0.B16
+	VEOR   src1.B16, ctr1.B16, ctr1.B16
+	VEOR   src2.B16, ctr2.B16, ctr2.B16
+	VEOR   src3.B16, ctr3.B16, ctr3.B16
+	VST1.P [ctr0.B16, ctr1.B16, ctr2.B16, ctr3.B16], 64(dst_ptr)
 
 	ADD  $4, idx
 	SUBS $1, nwide

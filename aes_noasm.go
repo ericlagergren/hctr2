@@ -1,4 +1,4 @@
-//go:build !arm64 || !gc || purego
+//go:build !(amd64 || arm64) || !gc || purego
 
 package hctr2
 
@@ -8,7 +8,10 @@ import (
 )
 
 func newCipher(key []byte) cipher.Block {
-	// len(key) is checked by NewAES.
-	block, _ := aes.NewCipher(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		// len(key) is checked by NewAES.
+		panic(err)
+	}
 	return block
 }
