@@ -187,6 +187,18 @@ func testSelfFuzz(t *testing.T, c *Cipher) {
 
 var sink []byte
 
+func BenchmarkEncryptAES128_512(b *testing.B) {
+	benchmarkEncrypt(b, 16, 512)
+}
+
+func BenchmarkEncryptAES128_4096(b *testing.B) {
+	benchmarkEncrypt(b, 16, 4096)
+}
+
+func BenchmarkEncryptAES128_8192(b *testing.B) {
+	benchmarkEncrypt(b, 16, 8192)
+}
+
 func BenchmarkEncryptAES256_512(b *testing.B) {
 	benchmarkEncrypt(b, 32, 512)
 }
