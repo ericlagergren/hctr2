@@ -40,14 +40,11 @@ func New(block cipher.Block) (*Cipher, error) {
 	h := make([]byte, BlockSize)
 	block.Encrypt(h, h)
 
-	p, err := polyval.New(h)
-	if err != nil {
-		return nil, err
-	}
-
 	c := &Cipher{
 		block: block,
-		h:     p,
+	}
+	if err := c.h.Init(h); err != nil {
+		return nil, err
 	}
 	// L ← Ek(bin(1))
 	binary.LittleEndian.PutUint64(c.l[0:8], 1)
@@ -78,7 +75,7 @@ type Cipher struct {
 	// block is the underlying block cipher.
 	block cipher.Block
 	// h is the running POLYVAL.
-	h *polyval.Polyval
+	h polyval.Polyval
 	// sum contains the output from the most recent call to
 	// polyhash.
 	sum [BlockSize]byte
