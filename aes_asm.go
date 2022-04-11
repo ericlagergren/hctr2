@@ -10,7 +10,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
-	"fmt"
 	"runtime"
 
 	"github.com/ericlagergren/hctr2/internal/subtle"
@@ -105,7 +104,6 @@ func (c *aesCipher) xctr(dst, src []byte, nonce *[BlockSize]byte) {
 			xorBlock(&ctr, &ctr, nonce)
 			encryptBlockAsm(len(c.enc)/4-1, &c.enc[0], &ctr[0], &ctr[0])
 			xorBlock((*[BlockSize]byte)(dst), &ctr, (*[BlockSize]byte)(src))
-			fmt.Printf("dst=%x\n", (*[BlockSize]byte)(dst))
 
 			dst = dst[BlockSize:]
 			src = src[BlockSize:]
