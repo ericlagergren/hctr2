@@ -14,12 +14,51 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+var testKeySizes = []int{16, 24, 32}
+
+func randbuf(n int) []byte {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		panic(err)
+	}
+	return buf
+}
+
+func dup(p []byte) []byte {
+	r := make([]byte, len(p))
+	copy(r, p)
+	return r
+}
+
 func unhex(s string) []byte {
 	p, err := hex.DecodeString(s)
 	if err != nil {
 		panic(err)
 	}
 	return p
+}
+
+func disableAsm(tb testing.TB) {
+	old := haveAsm
+	haveAsm = false
+	tb.Cleanup(func() {
+		haveAsm = old
+	})
+}
+
+// runTests runs both generic and assembly tests.
+func runTests(t *testing.T, fn func(t *testing.T)) {
+	if haveAsm {
+		t.Run("assembly", func(t *testing.T) {
+			t.Helper()
+			fn(t)
+		})
+	}
+	t.Run("generic", func(t *testing.T) {
+		t.Helper()
+		disableAsm(t)
+		fn(t)
+	})
 }
 
 type vector struct {
@@ -46,7 +85,13 @@ type vector struct {
 	Hash       string `json:"hash_hex"`
 }
 
+// TestHCTR2Vectors tests Cipher with test vectors from
+// github.com/google/hctr2.
 func TestHCTR2Vectors(t *testing.T) {
+	runTests(t, testHCTR2Vectors)
+}
+
+func testHCTR2Vectors(t *testing.T) {
 	test := func(t *testing.T, path string) {
 		var vecs []vector
 		buf, err := os.ReadFile(path)
@@ -91,7 +136,13 @@ func TestHCTR2Vectors(t *testing.T) {
 	}
 }
 
+// TestXCTRVectors tests Cipher.xctr with test vectors from
+// github.com/google/hctr2.
 func TestXCTRVectors(t *testing.T) {
+	runTests(t, testXCTRVectors)
+}
+
+func testXCTRVectors(t *testing.T) {
 	test := func(t *testing.T, path string) {
 		var vecs []vector
 		buf, err := os.ReadFile(path)
@@ -131,18 +182,25 @@ func TestXCTRVectors(t *testing.T) {
 	}
 }
 
+// TestSelfFuzz tests encrypting then decrypting random inputs.
+//
+// Is a substitute until there is another implementation to test
+// against.
 func TestSelfFuzz(t *testing.T) {
-	for _, n := range []int{16, 24, 32} {
-		name := fmt.Sprintf("AES-%d", n*8)
-		t.Run(name, func(t *testing.T) {
-			key := make([]byte, n)
-			c, err := NewAES(key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			testSelfFuzz(t, c)
-		})
+	test := func(t *testing.T) {
+		for _, n := range []int{16, 24, 32} {
+			name := fmt.Sprintf("AES-%d", n*8)
+			t.Run(name, func(t *testing.T) {
+				key := make([]byte, n)
+				c, err := NewAES(key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				testSelfFuzz(t, c)
+			})
+		}
 	}
+	runTests(t, test)
 }
 
 func testSelfFuzz(t *testing.T, c *Cipher) {
@@ -155,7 +213,7 @@ func testSelfFuzz(t *testing.T, c *Cipher) {
 	timer := time.NewTimer(d)
 
 	const (
-		N = BlockSize * 2
+		N = (BlockSize * 2) + BlockSize/2
 	)
 	buf := make([]byte, N)
 	for i := range buf {
@@ -185,42 +243,194 @@ func testSelfFuzz(t *testing.T, c *Cipher) {
 	}
 }
 
-var sink []byte
-
-func BenchmarkEncryptAES128_512(b *testing.B) {
-	benchmarkEncrypt(b, 16, 512)
+// TestOverlap tests Encrypt and Decryptwith overlapping buffers.
+func TestOverlap(t *testing.T) {
+	test := func(t *testing.T) {
+		for _, keyLen := range testKeySizes {
+			t.Run(fmt.Sprintf("AES-%d", keyLen*8), func(t *testing.T) {
+				testOverlap(t, keyLen)
+			})
+		}
+	}
+	runTests(t, test)
 }
 
-func BenchmarkEncryptAES128_4096(b *testing.B) {
-	benchmarkEncrypt(b, 16, 4096)
+func testOverlap(t *testing.T, keySize int) {
+	// TODO(eric): this was copied from my AES-GCM-SIV tests, so
+	// it probably could be simplified.
+	args := func() (key, plaintext, tweak []byte) {
+		type arg struct {
+			buf  []byte
+			ptr  *[]byte
+			i, j int
+		}
+		const (
+			max = 7789
+		)
+		args := []arg{
+			{buf: randbuf(keySize), ptr: &key},
+			{buf: randbuf(rand.Intn(max-BlockSize) + BlockSize), ptr: &plaintext},
+			{buf: randbuf(rand.Intn(max)), ptr: &tweak},
+		}
+		var buf []byte
+		for i := range rand.Perm(len(args)) {
+			a := &args[i]
+			a.i = len(buf)
+			buf = append(buf, a.buf...)
+			a.j = len(buf)
+		}
+		buf = buf[:len(buf):len(buf)]
+		for i := range args {
+			a := &args[i]
+			*a.ptr = buf[a.i:a.j:a.j]
+		}
+		return
+	}
+	for i := 0; i < 1000; i++ {
+		key, plaintext, tweak := args()
+		orig := dup(plaintext)
+
+		c, err := NewAES(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := make([]byte, len(plaintext))
+		c.Encrypt(want, dup(plaintext), dup(tweak))
+
+		got := plaintext
+		c.Encrypt(got, plaintext, tweak)
+		if !bytes.Equal(want, got) {
+			t.Fatalf("expected %x, got %x", want, got)
+		}
+		c.Decrypt(got, got, tweak)
+		if !bytes.Equal(got, orig) {
+			t.Fatalf("expected %x, got %x", orig, got)
+		}
+	}
 }
 
-func BenchmarkEncryptAES128_8192(b *testing.B) {
-	benchmarkEncrypt(b, 16, 8192)
+// runBench runs both generic and assembly benchmarks.
+func runBench(b *testing.B, fn func(b *testing.B)) {
+	if haveAsm {
+		b.Run("assembly", func(b *testing.B) {
+			b.Helper()
+			fn(b)
+		})
+	}
+	b.Run("generic", func(b *testing.B) {
+		b.Helper()
+		disableAsm(b)
+		fn(b)
+	})
 }
 
-func BenchmarkEncryptAES256_512(b *testing.B) {
-	benchmarkEncrypt(b, 32, 512)
-}
+var (
+	sink     []byte
+	bufSizes = []int{
+		512,
+		4096,
+		8192,
+	}
+	// benchKeySizes excludes AES-192 because nobody cares about
+	// its performance because nobody uses it and it shouldn't
+	// exist.
+	benchKeySizes = []int{16, 32}
+)
 
-func BenchmarkEncryptAES256_4096(b *testing.B) {
-	benchmarkEncrypt(b, 32, 4096)
-}
-
-func BenchmarkEncryptAES256_8192(b *testing.B) {
-	benchmarkEncrypt(b, 32, 8192)
+func BenchmarkEncrypt(b *testing.B) {
+	bench := func(b *testing.B) {
+		for _, keyLen := range benchKeySizes {
+			for _, bufLen := range bufSizes {
+				name := fmt.Sprintf("AES-%d/%d", keyLen*8, bufLen)
+				b.Run(name, func(b *testing.B) {
+					benchmarkEncrypt(b, keyLen, bufLen)
+				})
+			}
+		}
+	}
+	runBench(b, bench)
 }
 
 func benchmarkEncrypt(b *testing.B, keyLen, bufLen int) {
+	b.SetBytes(int64(bufLen))
+
 	key := make([]byte, keyLen)
-	c, _ := NewAES(key)
+	c, err := NewAES(key)
+	if err != nil {
+		b.Fatal(err)
+	}
 	buf := make([]byte, bufLen)
 	tweak := make([]byte, 16)
+	b.ResetTimer()
 
-	b.SetBytes(int64(len(buf)))
 	for i := 0; i < b.N; i++ {
 		binary.LittleEndian.PutUint64(tweak[0:8], uint64(i))
 		c.Encrypt(buf, buf, tweak)
+	}
+	sink = buf
+}
+
+func BenchmarkDecrypt(b *testing.B) {
+	bench := func(b *testing.B) {
+		for _, keyLen := range benchKeySizes {
+			for _, bufLen := range bufSizes {
+				name := fmt.Sprintf("AES-%d/%d", keyLen*8, bufLen)
+				b.Run(name, func(b *testing.B) {
+					benchmarkDecrypt(b, keyLen, bufLen)
+				})
+			}
+		}
+	}
+	runBench(b, bench)
+}
+
+func benchmarkDecrypt(b *testing.B, keyLen, bufLen int) {
+	b.SetBytes(int64(bufLen))
+
+	key := make([]byte, keyLen)
+	c, err := NewAES(key)
+	if err != nil {
+		b.Fatal(err)
+	}
+	buf := make([]byte, bufLen)
+	tweak := make([]byte, 16)
+	binary.LittleEndian.PutUint64(tweak[0:8], 42)
+	c.Encrypt(buf, buf, tweak)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		c.Decrypt(buf, buf, tweak)
+	}
+	sink = buf
+}
+
+func BenchmarkXCTR2(b *testing.B) {
+	bench := func(b *testing.B) {
+		for _, keyLen := range benchKeySizes {
+			for _, bufLen := range bufSizes {
+				name := fmt.Sprintf("AES-%d/%d", keyLen*8, bufLen)
+				b.Run(name, func(b *testing.B) {
+					benchmarkXCTR2(b, keyLen, bufLen)
+				})
+			}
+		}
+	}
+	runBench(b, bench)
+}
+
+func benchmarkXCTR2(b *testing.B, keyLen, bufLen int) {
+	b.SetBytes(int64(bufLen))
+
+	buf := make([]byte, bufLen)
+	c, err := NewAES(make([]byte, keyLen))
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		c.xctr(buf, buf, &c.s)
 	}
 	sink = buf
 }
