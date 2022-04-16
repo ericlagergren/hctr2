@@ -17,10 +17,17 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
+	"runtime"
+
+	"github.com/ericlagergren/polyval"
+	"golang.org/x/sys/cpu"
 
 	"github.com/ericlagergren/hctr2/internal/subtle"
-	"github.com/ericlagergren/polyval"
 )
+
+var haveAsm = runtime.GOOS == "darwin" ||
+	cpu.ARM64.HasAES ||
+	cpu.X86.HasAES
 
 // BlockSize is the size of block allowed by this package.
 const BlockSize = 16
@@ -76,9 +83,6 @@ type Cipher struct {
 	block cipher.Block
 	// h is the running POLYVAL.
 	h polyval.Polyval
-	// sum contains the output from the most recent call to
-	// polyhash.
-	sum [BlockSize]byte
 	// l is E_k(bin(1)).
 	//
 	// It is XORed with mm and uu to create s.
@@ -109,7 +113,9 @@ type Cipher struct {
 	//
 	// state1 is the case where the length of the plaintext is
 	// not evenly divisible by the block size.
-	state0, state1 []byte
+	state0, state1 polyval.Polyval
+	// init is true if initTweak has been called.
+	init bool
 }
 
 // Encrypt encrypts plaintext with tweak and writes the result to
@@ -166,10 +172,13 @@ func (c *Cipher) hctr2(dst, src, tweak []byte, seal bool) {
 	c.initTweak(tweak, len(N))
 	// Save the POLYVAL state after adding the tweak since we can
 	// reuse it across both calls to polyhash.
-	state, _ := c.h.MarshalBinary()
+	state := c.h
+
+	var sum [BlockSize]byte
 
 	// MM ← M ⊕ H_h(T, N)
-	xorBlock(&c.mm, (*[BlockSize]byte)(M), c.polyhash(N))
+	polyhash(&c.h, &sum, N)
+	xorBlock(&c.mm, (*[BlockSize]byte)(M), &sum)
 
 	// UU ← Ek(MM)
 	if seal {
@@ -185,16 +194,15 @@ func (c *Cipher) hctr2(dst, src, tweak []byte, seal bool) {
 	V := dst[BlockSize:len(src)]
 	c.xctr(V, N, &c.s)
 
-	c.h.UnmarshalBinary(state)
-
 	// U ← UU ⊕ Hh(T, V)
-	xorBlock((*[BlockSize]byte)(dst), &c.uu, c.polyhash(V))
+	polyhash(&state, &sum, V)
+	xorBlock((*[BlockSize]byte)(dst), &c.uu, &sum)
 }
 
 func (c *Cipher) initTweak(tweak []byte, n int) {
 	// The first block in the hash of the tweak is the same so
 	// long as the length of the tweak is the same, so cache it.
-	if c.state0 == nil || c.tweakLen != len(tweak) {
+	if !c.init || c.tweakLen != len(tweak) {
 		// M = the input to the hash.
 		// n = the block size of the hash.
 		//
@@ -206,22 +214,21 @@ func (c *Cipher) initTweak(tweak []byte, n int) {
 		block := make([]byte, BlockSize)
 
 		binary.LittleEndian.PutUint64(block, l)
-		c.h.Update(block)
-		c.state0, _ = c.h.MarshalBinary()
-		c.h.Reset()
+		c.state0 = c.h
+		c.state0.Update(block)
 
 		binary.LittleEndian.PutUint64(block, l+1)
-		c.h.Update(block)
-		c.state1, _ = c.h.MarshalBinary()
-		c.h.Reset()
+		c.state1 = c.h
+		c.state1.Update(block)
 
 		c.tweakLen = len(tweak)
+		c.init = true
 	}
 
 	if n%BlockSize == 0 {
-		c.h.UnmarshalBinary(c.state0)
+		c.h = c.state0
 	} else {
-		c.h.UnmarshalBinary(c.state1)
+		c.h = c.state1
 	}
 
 	if len(tweak) >= BlockSize {
@@ -237,23 +244,20 @@ func (c *Cipher) initTweak(tweak []byte, n int) {
 }
 
 // polyhash computes H_h(tweak, src) and writes the digest to
-// c.sum.
-//
-// For convenience, polyhash returns a pointer to c.sum.
-func (c *Cipher) polyhash(src []byte) *[BlockSize]byte {
+// sum.
+func polyhash(p *polyval.Polyval, sum *[BlockSize]byte, src []byte) {
 	if len(src) >= BlockSize {
 		n := len(src) &^ (BlockSize - 1)
-		c.h.Update(src[:n])
+		p.Update(src[:n])
 		src = src[n:]
 	}
 	if len(src) > 0 {
 		block := make([]byte, BlockSize)
 		n := copy(block, src)
 		block[n] = 1
-		c.h.Update(block)
+		p.Update(block)
 	}
-	c.h.Sum(c.sum[:0])
-	return &c.sum
+	p.Sum(sum[:0])
 }
 
 // xctr performs XCTR_k(S) ^ nonce.
