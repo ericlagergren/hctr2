@@ -22,7 +22,7 @@ import (
 	"github.com/ericlagergren/polyval"
 	"golang.org/x/sys/cpu"
 
-	"github.com/ericlagergren/hctr2/internal/subtle"
+	"github.com/ericlagergren/subtle"
 )
 
 var haveAsm = runtime.GOOS == "darwin" ||

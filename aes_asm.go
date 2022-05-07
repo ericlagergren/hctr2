@@ -11,7 +11,7 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 
-	"github.com/ericlagergren/hctr2/internal/subtle"
+	"github.com/ericlagergren/subtle"
 )
 
 //go:noescape
