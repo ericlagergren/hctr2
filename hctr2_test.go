@@ -71,14 +71,13 @@ type vector struct {
 				Key   int `json:"key"`
 				Nonce int `json:"nonce"`
 			} `json:"lengths"`
-		} `json:"block_cipher"`
+		} `json:"blockcipher"`
 	} `json:"cipher"`
 	Description string `json:"description"`
 	Input       struct {
-		Key     string `json:"key_hex"`
-		Tweak   string `json:"tweak_hex"`
-		Message string `json:"message_hex"`
-		Nonce   string `json:"nonce_hex"`
+		Key   string `json:"key_hex"`
+		Tweak string `json:"tweak_hex"`
+		Nonce string `json:"nonce_hex"`
 	} `json:"input"`
 	Plaintext  string `json:"plaintext_hex"`
 	Ciphertext string `json:"ciphertext_hex"`
